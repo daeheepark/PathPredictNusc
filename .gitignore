@@ -1,2 +1,6 @@
-/my_data
+/dataset_mini
+/dataset
+/result/*
+/model/*
 /workspace.ws.code-workspace
+/.vscode
