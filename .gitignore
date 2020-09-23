@@ -1,6 +1,6 @@
-/dataset_mini
+/exps/*
 /dataset
-/result/*
-/model/*
-/workspace.ws.code-workspace
+/*.code-workspace
 /.vscode
+./data_manoeuvre
+./test_1by1.py

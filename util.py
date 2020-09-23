@@ -2,14 +2,44 @@ import numpy as np
 import cv2
 from PIL import Image
 import os
+import os.path as osp
 import torch
 import torchvision.transforms as transforms
 
+def restore_img(img):
+    mean=[0.485, 0.456, 0.406]
+    std=[0.229, 0.224, 0.225]
+    
+    img = img * torch.tensor(std).view(3, 1, 1) + torch.tensor(mean).view(3, 1, 1)
+    return img
+
+def make_path(args):
+    exp_path = osp.join('./exps', args.name)
+    train_path = osp.join(exp_path, './train')
+    val_path = osp.join(exp_path, './val')
+    ckpt_path = osp.join(exp_path, './ckpt')
+    infer_path = osp.join(exp_path, './infer')
+    
+    if not os.path.exists(exp_path):
+        os.makedirs(exp_path)
+        os.makedirs(train_path)
+        os.makedirs(val_path)
+        os.makedirs(ckpt_path)
+        os.makedirs(infer_path)
+        print(exp_path + ' is built.')
+    else:
+        print(exp_path + ' already exsits.')
+
+    return exp_path, train_path, val_path, infer_path,ckpt_path
+
+def NaN2Zero(target : torch.Tensor):
+    target[target != target] = 0
+    return target
 
 def visualize(img : np.ndarray, num_modes = 2, prediction = None, gt = None, traj_slice : tuple((int, int)) = None) :
     if prediction is not None:
-        trajs, probs = prediction[:,:-num_modes], prediction[:,-num_modes:]
-        trajs, probs = np.array_split(trajs.detach().numpy(), num_modes, axis=1), np.array_split(probs.detach().numpy(), num_modes, axis=1) 
+        trajs, probs = prediction[:-num_modes], prediction[-num_modes:]
+        trajs, probs = np.array_split(trajs.unsqueeze(0).numpy(), num_modes, axis=1), np.array_split(probs.unsqueeze(0).numpy(), num_modes, axis=1) 
     
         if traj_slice is not None:
             trajs, probs = trajs[traj_slice[0]: traj_slice[1]], probs[traj_slice[0]: traj_slice[1]] 
@@ -64,23 +94,23 @@ class DataSet(torch.utils.data.Dataset):
                 break
             fns.append(line.strip())
 
-        if split not in ['train', 'val', 'test']:
-            raise NameError('split should be "train" / "val" / "test"')
+        if split not in ['train', 'train_val', 'val']:
+            raise NameError('split should be "train" / "trai_val" / "val"')
 
         self.dataroot = dataroot
         self.fns = fns
         self.split = split
+        transform = transforms.Compose([transforms.Resize(224),transforms.ToTensor(), transforms.Normalize(mean=[0.485, 0.456, 0.406],
+                                 std=[0.229, 0.224, 0.225])])
+        self.transform = transform                        
     
     def __getitem__(self, index):
         fn = self.fns[index]
         image = Image.open(os.path.join(self.dataroot, 'image', fn+'.jpg'))
-        image = transforms.ToTensor()(image)
+        image = self.transform(image)
         agent_state_vector = torch.load(os.path.join(self.dataroot, 'state', fn+'.state'))
         
-        if self.split == 'train' or 'val':
-            ground_truth = torch.load(os.path.join(self.dataroot, 'traj', fn+'.traj'))
-        elif self.split == 'test':
-            ground_truth = None
+        ground_truth = torch.load(os.path.join(self.dataroot, 'traj', fn+'.traj'))
 
         return image, agent_state_vector, ground_truth
         

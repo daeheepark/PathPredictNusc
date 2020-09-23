@@ -1,96 +1,119 @@
 import torch
 from torch.utils.data import DataLoader
-import util 
-import os
-
-trainset_mini = util.DataSet('./dataset/mini_train', 'train')
-valset_mini = util.DataSet('./dataset/mini_val', 'val')
-
-train_mini_loader = DataLoader(trainset_mini, batch_size=32, shuffle=True, num_workers=0)
-val_mini_loader = DataLoader(valset_mini, batch_size=32, shuffle=False, num_workers=0)
-
-NUM_EPC = 200
-
-device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
-print(device)
-
+import torch.nn as nn
 import torch.optim as optim
-import numpy as np
 
-from nuscenes.prediction.models.backbone import ResNetBackbone
-from nuscenes.prediction.models.mtp import MTP, MTPLoss
+import os
 from tqdm import tqdm
+import numpy as np
+import argparse
+import json
 
-num_modes = 2
+from backbone import ResNetBackbone, MobileNetBackbone
+from mtp import MTP, MTPLoss
+import util 
 
-backbone = ResNetBackbone('resnet18')
-model = MTP(backbone, num_modes)
+parser = argparse.ArgumentParser()
+parser.add_argument('--name',       required=True,  type=str,   help='experiment name. saved to ./exps/[name]')
+parser.add_argument('--max_epc',    default=10,    type=int)
+parser.add_argument('--min_loss',   default=0.56234,type=float, help='minimum loss threshold that training stop')
+parser.add_argument('--batch_size', default=100,     type=int)
+parser.add_argument('--num_workers',default=8,      type=int)
+parser.add_argument('--optimizer',  default='sgd', choices=['adam', 'sgd'])
+parser.add_argument('--lr',         default=0.01, type=float)
+parser.add_argument('--gpu_ids',    default='0,1',  type=str,   help='id of gpu ex) "0" or "0,1"')
+parser.add_argument('--tsboard',    action='store_true',        help='use tensorboardX to viasuzliae experiments')
+
+parser.add_argument('--num_modes',  default=2)
+parser.add_argument('--backbone',   default='mobilenet_v2',     choices=['mobilenet_v2', 'resnet18', 'resnet34', 'resnet50', 'resnet101', 'resnet152'])
+parser.add_argument('--unfreeze',   default=0,      type=int,   help='number of layer of backbone CNN to update weight')
+
+args = parser.parse_args('--name test --optimizer adam --lr 0.1 --backbone mobilenet_v2'.split())
+# args = parser.parse_args()
+
+exp_path, train_path, val_path, infer_path, ckpt_path = util.make_path(args)
+
+f = open(ckpt_path+'/'+'exp_config.txt', 'w')
+json.dump(args.__dict__, f, indent=2)
+f.close()
+
+os.environ["CUDA_VISIBLE_DEVICES"] = args.gpu_ids
+device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
+
+trainset = util.DataSet('./dataset/train', 'train')
+valset = util.DataSet('./dataset/val', 'train_val')
+
+train_loader = DataLoader(trainset, shuffle=True, batch_size=args.batch_size, num_workers=args.num_workers)
+val_loader = DataLoader(valset, shuffle=False, batch_size=args.batch_size, num_workers=args.num_workers)
+
+backbone = ResNetBackbone(args.backbone) if args.backbone.startswith('resnet') else MobileNetBackbone(args.backbone)
+
+total_layer_ct = sum(1 for _ in backbone.parameters())
+for i, param in enumerate(backbone.parameters()):
+    if i < total_layer_ct - args.unfreeze:
+        param.requires_grad = False
+    else:
+        param.requires_grad = True
+
+model = MTP(backbone, args.num_modes)
+loss_function = MTPLoss(args.num_modes, 1, 5)
+optimizer = optim.Adam(model.parameters(), lr=args.lr) if args.optimizer == 'adam' else optim.SGD(model.parameters(), lr=args.lr) 
+
+torch.save(model, ckpt_path + '/' + 'model.archi')
+torch.save(optimizer, ckpt_path + '/' + 'optim.archi')
+
+model = nn.DataParallel(model)
 model = model.to(device)
-
-loss_function = MTPLoss(num_modes, 1, 5)
 
 current_ep_loss = 10000
 
-optimizer = optim.SGD(model.parameters(), lr=0.1)
-
-n_iter = 0
-
-minimum_loss = 0
-
-if os.path.isfile('./model/save_log.txt'):
-    os.remove('./model/save_log.txt')
-
-if num_modes == 2:
-
-    # We expect to see 75% going_forward and
-    # 25% going backward. So the minimum
-    # classification loss is expected to be
-    # 0.56234
-
-    minimum_loss += 0.56234
-
-for ep in range(NUM_EPC):
-    loss_mean = []
-    for img, agent_state_vector, ground_truth in tqdm(train_mini_loader):
-
-        img[img != img] = 0
-        agent_state_vector[agent_state_vector != agent_state_vector] = 0
-        ground_truth[ground_truth != ground_truth] = 0
-
-        img = img.to(device)
-        agent_state_vector = agent_state_vector.to(device)
-        ground_truth = ground_truth.to(device)
+for epoch in range(args.max_epc):
+    
+    print('training start')
+    model.train()
+    loss_tr_mean = []
+    for img, state, gt in tqdm(train_loader):
+        img, state, gt = util.NaN2Zero(img), util.NaN2Zero(state), util.NaN2Zero(gt)
+        img, state, gt = img.to(device), state.to(device), gt.to(device)
 
         optimizer.zero_grad()
+        prediction = model(img, state)
+        loss = loss_function(prediction, gt.unsqueeze(1))
 
-        prediction = model(img, agent_state_vector)
-
-        loss = loss_function(prediction, ground_truth.unsqueeze(1))
-
-        # loss = loss_function(prediction, ground_truth)
         loss.backward()
         optimizer.step()
 
-        current_loss = loss.cpu().detach().numpy()
-        loss_mean.append(current_loss.item())
+        loss_tr_mean.append(loss.item())
 
-    ep_loss = np.mean(loss_mean)
-    print(f"Current loss is {ep_loss:.4f} @ ep {n_iter:d}")
-    # torch.save(model.state_dict(), './model/model_weight_best.pth')
+    print('validation start')
+    model.eval()
+    loss_val_mean = []
+    for img, state, gt in tqdm(val_loader):
+        img, state, gt = util.NaN2Zero(img), util.NaN2Zero(state), util.NaN2Zero(gt)
+        img, state, gt = img.to(device), state.to(device), gt.to(device)
 
-    if ep_loss < current_ep_loss:
-        print('lowest loss achieved')
-        torch.save(model.state_dict(), './model/model_weight_best.pth')
-        current_ep_loss = ep_loss
-        f = open('./model/save_log.txt', 'a')
-        f.write(f'loss {ep_loss:.3f} achieved at epoch {n_iter:d} \n')
+        prediction = model(img, state)
+        loss = loss_function(prediction, gt.unsqueeze(1))
+
+        loss_val_mean.append(loss.item())
+
+    ep_loss_tr, ep_loss_val = np.mean(loss_tr_mean), np.mean(loss_val_mean)
+    print(f"Current training loss is {ep_loss_tr:.4f} @ ep {epoch:d}")
+    print(f"Current validation loss is {ep_loss_val:.4f} @ ep {epoch:d}")
+
+    checkpoint = {'state_dict' : model.module.state_dict(), 'optimizer' : optimizer.state_dict(), 'loss' : ep_loss_tr, 'ep' : epoch}
+
+    if ep_loss_val < current_ep_loss:
+        print('best val loss achieved')
+        torch.save(checkpoint, ckpt_path + '/' + 'weight_best.pth')
+        current_ep_loss = ep_loss_val
+        f = open(ckpt_path+'/'+'save_log.txt', 'a')
+        f.write(f'\n loss {ep_loss_val:.3f} achieved at epoch {epoch:d}')
         f.close()
 
-    if np.allclose(ep_loss, minimum_loss, atol=1e-4):
-        print(f"Achieved near-zero loss after {n_iter} iterations.")
-        torch.save(model.state_dict(), f'./model/model_weight_{ep_loss:.2f}.pth')
+    if np.allclose(ep_loss_val, args.min_loss, atol=1e-4):
+        print(f"Achieved loss under min_loss after {epoch} iterations.")
+        torch.save(checkpoint, ckpt_path + '/' + f'weight_{ep_loss_val:.3f}.pth')
         break
 
-    n_iter += 1
-
-torch.save(model.state_dict(), f'./model/model_weight_lastep.pth')
+torch.save(checkpoint, ckpt_path + '/' + 'weight_last.pth')
