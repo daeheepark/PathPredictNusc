@@ -15,7 +15,7 @@ import util
 
 parser = argparse.ArgumentParser()
 parser.add_argument('--name',       required=True,  type=str,   help='experiment name. saved to ./exps/[name]')
-parser.add_argument('--max_epc',    default=10,    type=int)
+parser.add_argument('--max_epc',    default=50,    type=int)
 parser.add_argument('--min_loss',   default=0.56234,type=float, help='minimum loss threshold that training stop')
 parser.add_argument('--batch_size', default=100,     type=int)
 parser.add_argument('--num_workers',default=8,      type=int)
@@ -28,7 +28,7 @@ parser.add_argument('--num_modes',  default=2)
 parser.add_argument('--backbone',   default='mobilenet_v2',     choices=['mobilenet_v2', 'resnet18', 'resnet34', 'resnet50', 'resnet101', 'resnet152'])
 parser.add_argument('--unfreeze',   default=0,      type=int,   help='number of layer of backbone CNN to update weight')
 
-args = parser.parse_args('--name test --optimizer adam --lr 0.1 --backbone mobilenet_v2'.split())
+args = parser.parse_args('--name 1stexp --optimizer sgd --lr 0.1 --backbone mobilenet_v2'.split())
 # args = parser.parse_args()
 
 exp_path, train_path, val_path, infer_path, ckpt_path = util.make_path(args)

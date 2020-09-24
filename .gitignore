@@ -3,4 +3,4 @@
 /*.code-workspace
 /.vscode
 ./data_manoeuvre
-./test_1by1.py
+test_1by1.py

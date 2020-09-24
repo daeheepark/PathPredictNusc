@@ -20,7 +20,7 @@ vis = visdom.Visdom()
 parser = argparse.ArgumentParser()
 parser.add_argument('--name',       required=True,  type=str)
 parser.add_argument('--ep',         required=True,  type=str)
-parser.add_argument('--whichset',   default='val',  type=str,   help='dataset to visualize')
+parser.add_argument('--whichset',   default='val',  type=str,   choices=['val', 'train_val'], help='dataset to visualize')
 parser.add_argument('--batch_id',   default=0,      type=int,   help='batch id to visualize')
 parser.add_argument('--batch_size', default=100,    type=int,   help='number of image to show')
 parser.add_argument('--num_workers',default=8,      type=int)
@@ -28,7 +28,7 @@ parser.add_argument('--gpu_ids',    default='2',    type=str,   help='id of gpu 
 parser.add_argument('--shuffle',    action='store_true')
 parser.add_argument('--savepic',    action='store_true')
 
-args = parser.parse_args('--name test --ep best --whichset val --batch_id 0 --shuffle'.split())
+args = parser.parse_args('--name test --ep best --whichset train_val --batch_id 0 --shuffle'.split())
 # args = parser.parse_args()
 
 os.environ["CUDA_VISIBLE_DEVICES"] = args.gpu_ids
@@ -43,8 +43,9 @@ model = torch.load(ckpt_path + '/' + 'model.archi').to(device)
 # model = nn.DataParallel(model).to(device)
 model.load_state_dict(torch.load(ckpt_path + '/' + 'weight_' + args.ep + '.pth')['state_dict'])
 
+dataiter = iter(dataloader)
 for _ in range(args.batch_id + 1):
-    data2show = next(iter(dataloader))
+    data2show = next(dataiter)
 
 img, state, gt = data2show
 # img, state, gt = util.NaN2Zero(img), util.NaN2Zero(state), util.NaN2Zero(gt)
@@ -62,4 +63,5 @@ for idx, (img_, state_, gt_, pred_) in enumerate(zip(img, state, gt, prediction)
     img_resize = transforms.Resize(500)(img_pil)
 
     result_img = util.visualize(np.array(img_resize), num_modes=2, prediction=pred_, gt=gt_)#, traj_slice=(1,2))
-    vis.image(result_img.transpose(2,0,1), opts=dict(title=args.name + ' batch id: ' + str(args.batch_id) + '_' + str(idx)))
+    vis.image(result_img.transpose(2,0,1), opts=dict(title=args.name + ' ep: ' + args.ep + ' batch id: ' + str(args.batch_id) + ' batch idx: ' + str(idx)))
+    # vis.image(img_orig, opts=dict(title=args.name + ' batch id: ' + str(args.batch_id) + '_' + str(idx)))

@@ -6,6 +6,8 @@ import os.path as osp
 import torch
 import torchvision.transforms as transforms
 
+TRAJ_COLORS = [(0,255,255), (255,128,0), (255,0,255), (0,0,255)]
+
 def restore_img(img):
     mean=[0.485, 0.456, 0.406]
     std=[0.229, 0.224, 0.225]
@@ -37,46 +39,41 @@ def NaN2Zero(target : torch.Tensor):
     return target
 
 def visualize(img : np.ndarray, num_modes = 2, prediction = None, gt = None, traj_slice : tuple((int, int)) = None) :
+    x, y = 400, 250
+
+    if gt is not None:
+        for gt_ in gt:
+            x_cv, y_cv = int(y+gt_[0].item()*10), int(x-gt_[1].item()*10)
+            cv2.drawMarker(img, (x_cv, y_cv), (0,255,0), cv2.MARKER_SQUARE, 6, 4, cv2.FILLED)
+
+        size, _ = cv2.getTextSize('GT', cv2.FONT_HERSHEY_SIMPLEX, 0.5, 1)
+        sx, sy = size
+        cv2.rectangle(img, (x_cv,y_cv-sy-6), (x_cv+sx+6,y_cv), (255,255,255), -1)
+        cv2.putText(img, 'GT', (x_cv+3,y_cv-3), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0,0,0), 1)
+
     if prediction is not None:
         trajs, probs = prediction[:-num_modes], prediction[-num_modes:]
-        trajs, probs = np.array_split(trajs.unsqueeze(0).numpy(), num_modes, axis=1), np.array_split(probs.unsqueeze(0).numpy(), num_modes, axis=1) 
+        trajs, probs = np.array_split(trajs.numpy(), num_modes, axis=0), np.array_split(probs.numpy(), num_modes, axis=0) 
     
         if traj_slice is not None:
             trajs, probs = trajs[traj_slice[0]: traj_slice[1]], probs[traj_slice[0]: traj_slice[1]] 
 
-        for traj, prob in zip(trajs, probs):
-            x, y = 400, 250
-            cv2.circle(img, (int(y), int(x)), 2, (0,0,255), 2)
-            for disp in np.array_split(traj, 12, axis=1):
-                x_cv, y_cv = y+int(disp[0][0])*10, x-int(disp[0][1])*10
-                cv2.circle(img, (x_cv, y_cv), 2, (0,0,255), 2)
-            #     p1 = (int(y),int(x))
-            #     x -= disp[0][1] * 10
-            #     y -= disp[0][0] * 10s
-            #     p2 = (int(y),int(x))
+        for i, (traj, prob) in enumerate(zip(trajs, probs)):
+            traj_x, traj_y = traj[0::2], traj[1::2]
+            prob_ = prob[0]
+            prev_x, prev_y = y, x
+            for traj_x_, traj_y_ in zip(traj_x, traj_y):
+                x_cv, y_cv = int(y+traj_x_*10), int(x-traj_y_*10)
+                cv2.drawMarker(img, (x_cv, y_cv), TRAJ_COLORS[i], cv2.MARKER_CROSS, 6, 3, cv2.FILLED)
+                cv2.arrowedLine(img, (prev_x, prev_y), (x_cv, y_cv), TRAJ_COLORS[i], 1, cv2.LINE_AA, tipLength=0.1)
+                prev_x, prev_y = x_cv, y_cv
 
-            #     cv2.line(img, p1, p2, (255,0,255), 1 )
-            #     cv2.circle(img, (int(y), int(x)), 2, (0,0,255), 2)
-
-            # cv2.putText(img, '%.2f' % prob, p2, cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255,255,255), 3)
-            # cv2.putText(img, '%.2f' % prob, p2, cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0,0,0), 1)
-                
-            # cv2.putText(img, '%.2f' % prob, p2, cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255,255,255), 3)
-            cv2.rectangle(img, (x_cv+5,y_cv-20), (x_cv+50,y_cv), (255,255,255), -1)
-            cv2.putText(img, '%.2f' % prob, (x_cv+8,y_cv-8), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0,0,0), 1)
+            prob_ = f'{prob[0]:.2f}'
+            size, _ = cv2.getTextSize(prob_, cv2.FONT_HERSHEY_SIMPLEX, 0.5, 1)
+            sx, sy = size
+            cv2.rectangle(img, (x_cv,y_cv-sy-6), (x_cv+sx+6,y_cv), (255,255,255), -1)
+            cv2.putText(img, prob_, (x_cv+3,y_cv-3), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0,0,0), 1)
     
-    if gt is not None:
-        traj = np.asarray(gt).reshape(-1,24)
-        x, y = 400, 250
-        cv2.circle(img, (int(y), int(x)), 2, (0,255,0), 2)
-        for disp in np.array_split(traj, 12, axis=1):
-            x_cv, y_cv = y+int(disp[0][0])*10, x-int(disp[0][1])*10
-            cv2.circle(img, (x_cv, y_cv), 2, (0,255,0), 2)
-
-        # cv2.putText(img, 'gt', p2, cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255,255,255), 3)
-        cv2.rectangle(img, (x_cv+5,y_cv-20), (x_cv+30,y_cv), (255,255,255), -1)
-        cv2.putText(img, 'gt', (x_cv+8,y_cv-8), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0,0,0), 1)
-        
     return img
 
 class DataSet(torch.utils.data.Dataset):
