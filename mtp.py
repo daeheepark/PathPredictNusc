@@ -23,7 +23,7 @@ class MTP(nn.Module):
 
     def __init__(self, backbone: nn.Module, num_modes: int,
                  seconds: float = 6, frequency_in_hz: float = 2,
-                 n_hidden_layers: int = 4096, input_shape: Tuple[int, int, int] = (3, 500, 500)):
+                 n_hidden_layers: int = 4096, input_shape: Tuple[int, int, int] = (3, 500, 500), is_diff=False):
         """
         Inits the MTP network.
         :param backbone: CNN Backbone to use.
@@ -51,6 +51,8 @@ class MTP(nn.Module):
         self.fc1 = nn.Linear(backbone_feature_dim + ASV_DIM, n_hidden_layers)
         # self.fc1 = nn.Linear(backbone_feature_dim, n_hidden_layers)
         predictions_per_mode = int(seconds * frequency_in_hz) * 2
+        if is_diff:
+            predictions_per_mode = int(seconds * frequency_in_hz) * 2 - 2 
 
         self.fc2 = nn.Linear(n_hidden_layers, int(num_modes * predictions_per_mode + num_modes))
 

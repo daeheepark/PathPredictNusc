@@ -15,10 +15,10 @@ import util
 
 parser = argparse.ArgumentParser()
 parser.add_argument('--name',       required=True,  type=str,   help='experiment name. saved to ./exps/[name]')
-parser.add_argument('--max_epc',    default=50,    type=int)
+parser.add_argument('--max_epc',    default=30,    type=int)
 parser.add_argument('--min_loss',   default=0.56234,type=float, help='minimum loss threshold that training stop')
 parser.add_argument('--batch_size', default=100,     type=int)
-parser.add_argument('--num_workers',default=8,      type=int)
+parser.add_argument('--num_workers',default=4,      type=int)
 parser.add_argument('--optimizer',  default='sgd', choices=['adam', 'sgd'])
 parser.add_argument('--lr',         default=0.01, type=float)
 parser.add_argument('--gpu_ids',    default='0,1',  type=str,   help='id of gpu ex) "0" or "0,1"')
@@ -28,8 +28,8 @@ parser.add_argument('--num_modes',  default=2)
 parser.add_argument('--backbone',   default='mobilenet_v2',     choices=['mobilenet_v2', 'resnet18', 'resnet34', 'resnet50', 'resnet101', 'resnet152'])
 parser.add_argument('--unfreeze',   default=0,      type=int,   help='number of layer of backbone CNN to update weight')
 
-args = parser.parse_args('--name 1stexp --optimizer sgd --lr 0.1 --backbone mobilenet_v2'.split())
-# args = parser.parse_args()
+# args = parser.parse_args('--name 1119_diff_exp1 --optimizer sgd --lr 0.1 --backbone mobilenet_v2'.split())
+args = parser.parse_args()
 
 exp_path, train_path, val_path, infer_path, ckpt_path = util.make_path(args)
 
@@ -40,8 +40,8 @@ f.close()
 os.environ["CUDA_VISIBLE_DEVICES"] = args.gpu_ids
 device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
 
-trainset = util.DataSet('./dataset/train', 'train')
-valset = util.DataSet('./dataset/val', 'train_val')
+trainset = util.DataSet_differential('./dataset/train', 'train')
+valset = util.DataSet_differential('./dataset/val', 'train_val')
 
 train_loader = DataLoader(trainset, shuffle=True, batch_size=args.batch_size, num_workers=args.num_workers)
 val_loader = DataLoader(valset, shuffle=False, batch_size=args.batch_size, num_workers=args.num_workers)
@@ -55,7 +55,7 @@ for i, param in enumerate(backbone.parameters()):
     else:
         param.requires_grad = True
 
-model = MTP(backbone, args.num_modes)
+model = MTP(backbone, args.num_modes, is_diff=True)
 loss_function = MTPLoss(args.num_modes, 1, 5)
 optimizer = optim.Adam(model.parameters(), lr=args.lr) if args.optimizer == 'adam' else optim.SGD(model.parameters(), lr=args.lr) 
 
@@ -72,13 +72,13 @@ for epoch in range(args.max_epc):
     print('training start')
     model.train()
     loss_tr_mean = []
-    for img, state, gt in tqdm(train_loader):
-        img, state, gt = util.NaN2Zero(img), util.NaN2Zero(state), util.NaN2Zero(gt)
-        img, state, gt = img.to(device), state.to(device), gt.to(device)
+    for img, state, gt, diff in tqdm(train_loader):
+        img, state, gt, diff = util.NaN2Zero(img), util.NaN2Zero(state), util.NaN2Zero(gt), util.NaN2Zero(diff)
+        img, state, gt, diff = img.to(device), state.to(device), gt.to(device), diff.to(device)
 
         optimizer.zero_grad()
         prediction = model(img, state)
-        loss = loss_function(prediction, gt.unsqueeze(1))
+        loss = loss_function(prediction, diff.unsqueeze(1))
 
         loss.backward()
         optimizer.step()
@@ -88,12 +88,12 @@ for epoch in range(args.max_epc):
     print('validation start')
     model.eval()
     loss_val_mean = []
-    for img, state, gt in tqdm(val_loader):
-        img, state, gt = util.NaN2Zero(img), util.NaN2Zero(state), util.NaN2Zero(gt)
-        img, state, gt = img.to(device), state.to(device), gt.to(device)
+    for img, state, gt, diff in tqdm(val_loader):
+        img, state, gt, diff = util.NaN2Zero(img), util.NaN2Zero(state), util.NaN2Zero(gt), util.NaN2Zero(diff)
+        img, state, gt, diff = img.to(device), state.to(device), gt.to(device), diff.to(device)
 
         prediction = model(img, state)
-        loss = loss_function(prediction, gt.unsqueeze(1))
+        loss = loss_function(prediction, diff.unsqueeze(1))
 
         loss_val_mean.append(loss.item())
 

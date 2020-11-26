@@ -8,6 +8,45 @@ import torchvision.transforms as transforms
 
 TRAJ_COLORS = [(0,255,255), (255,128,0), (255,0,255), (0,0,255)]
 
+class DataSet_differential(torch.utils.data.Dataset):
+    def __init__(self, dataroot, split=None): # dataroot should contatin /image, /state, /traj in it.
+        if not os.path.isdir(dataroot):
+            raise NameError('dataroot does not exist')
+
+        fn_list = open(os.path.join(dataroot, 'fn_list.txt'), 'r')
+
+        fns = []
+        while True:
+            line = fn_list.readline()
+            if not line:
+                fn_list.close()
+                break
+            fns.append(line.strip())
+
+        if split not in ['train', 'train_val', 'val']:
+            raise NameError('split should be "train" / "trai_val" / "val"')
+
+        self.dataroot = dataroot
+        self.fns = fns
+        self.split = split
+        transform = transforms.Compose([transforms.Resize(224),transforms.ToTensor(), transforms.Normalize(mean=[0.485, 0.456, 0.406],
+                                 std=[0.229, 0.224, 0.225])])
+        self.transform = transform                        
+    
+    def __getitem__(self, index):
+        fn = self.fns[index]
+        image = Image.open(os.path.join(self.dataroot, 'image', fn+'.jpg'))
+        image = self.transform(image)
+        agent_state_vector = torch.load(os.path.join(self.dataroot, 'state', fn+'.state'))
+        
+        ground_truth = torch.load(os.path.join(self.dataroot, 'traj', fn+'.traj'))
+        diff = ground_truth[1:] - ground_truth[:-1]
+
+        return image, agent_state_vector, ground_truth, diff
+        
+    def __len__(self):
+        return len(self.fns)
+
 def restore_img(img):
     mean=[0.485, 0.456, 0.406]
     std=[0.229, 0.224, 0.225]
