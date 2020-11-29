@@ -5,8 +5,89 @@ import os
 import os.path as osp
 import torch
 import torchvision.transforms as transforms
+import copy
 
 TRAJ_COLORS = [(0,255,255), (255,128,0), (255,0,255), (0,0,255)]
+
+def world2pix(xy_w):
+    x, y = 400,250
+    x_p, y_p = int(y+xy_w[0].item()*10), int(x-xy_w[1].item()*10)
+    return [x_p, y_p]
+
+def dac_metric(map, prediction, num_modes = 1):
+
+    gen_trajs = prediction
+    gen_trajs = gen_trajs[:-num_modes]
+    gen_trajs = gen_trajs.reshape((-1,2))
+    map_array = copy.copy(map)
+
+    da_mask = np.any(map_array > 0, axis=0)
+    decoding_timesteps = gen_trajs.shape[0]
+
+    stay_in_da = [True for i in range(decoding_timesteps)]
+
+    trajs = []
+    for i, traj in enumerate(gen_trajs):
+        trajs.append(world2pix(traj))
+    trajs = np.array(trajs)
+
+    oom_mask = np.any( np.logical_or(trajs >= 500, trajs < 0), axis=-1 )
+
+    for t in range(decoding_timesteps):
+        gen_trajs_t = trajs[t]
+        oom_mask_t = oom_mask[t]
+        x, y = gen_trajs_t
+
+        if oom_mask_t:
+            continue
+
+        if not da_mask[y, x]:
+            stay_in_da[t] = False
+
+    dac_ = np.array(stay_in_da).sum() / decoding_timesteps
+    return dac_
+
+class DataSet_proj(torch.utils.data.Dataset):
+    def __init__(self, dataroot, split=None): # dataroot should contatin /image, /state, /traj in it.
+        if not os.path.isdir(dataroot):
+            raise NameError('dataroot does not exist')
+
+        fn_list = open(os.path.join(dataroot, 'fn_list.txt'), 'r')
+
+        fns = []
+        while True:
+            line = fn_list.readline()
+            if not line:
+                fn_list.close()
+                break
+            fns.append(line.strip())
+
+        if split not in ['train', 'train_val', 'val']:
+            raise NameError('split should be "train" / "trai_val" / "val"')
+
+        self.dataroot = dataroot
+        self.fns = fns
+        self.split = split
+        transform = transforms.Compose([transforms.Resize(224),transforms.ToTensor(), transforms.Normalize(mean=[0.485, 0.456, 0.406],
+                                 std=[0.229, 0.224, 0.225])])
+        self.transform = transform                        
+    
+    def __getitem__(self, index):
+        fn = self.fns[index]
+        drivable_area = Image.open(os.path.join(self.dataroot, 'road', fn+'.jpg'))
+        drivable_area = self.transform(drivable_area)
+        lane_image = Image.open(os.path.join(self.dataroot, 'lane', fn+'.jpg'))
+        lane_image = self.transform(lane_image)
+        agents_image = Image.open(os.path.join(self.dataroot, 'agent', fn+'.jpg'))
+        agents_image = self.transform(agents_image)
+        past_trajectory = torch.load(os.path.join(self.dataroot, 'past', fn+'.traj'))
+        agent_state_vector = torch.load(os.path.join(self.dataroot, 'state', fn+'.state'))
+        ground_truth = torch.load(os.path.join(self.dataroot, 'traj', fn+'.traj'))
+
+        return drivable_area, lane_image, agents_image, agent_state_vector, past_trajectory, ground_truth
+        
+    def __len__(self):
+        return len(self.fns)
 
 class DataSet_differential(torch.utils.data.Dataset):
     def __init__(self, dataroot, split=None): # dataroot should contatin /image, /state, /traj in it.
