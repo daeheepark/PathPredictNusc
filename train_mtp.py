@@ -23,13 +23,14 @@ parser.add_argument('--optimizer',  default='sgd', choices=['adam', 'sgd'])
 parser.add_argument('--lr',         default=0.01, type=float)
 parser.add_argument('--gpu_ids',    default='0,1',  type=str,   help='id of gpu ex) "0" or "0,1"')
 parser.add_argument('--tsboard',    action='store_true',        help='use tensorboardX to viasuzliae experiments')
+parser.add_argument('--diff',       action='store_true',        help='difference of trajectory as output')
 
-parser.add_argument('--num_modes',  default=2)
+parser.add_argument('--num_modes',  default=2, type=int)
 parser.add_argument('--backbone',   default='mobilenet_v2',     choices=['mobilenet_v2', 'resnet18', 'resnet34', 'resnet50', 'resnet101', 'resnet152'])
 parser.add_argument('--unfreeze',   default=0,      type=int,   help='number of layer of backbone CNN to update weight')
 
-# args = parser.parse_args('--name 1119_diff_exp1 --optimizer sgd --lr 0.1 --backbone mobilenet_v2'.split())
-args = parser.parse_args()
+args = parser.parse_args('--name test --optimizer sgd --lr 0.1 --backbone mobilenet_v2 --num_modes 1'.split())
+# args = parser.parse_args()
 
 exp_path, train_path, val_path, infer_path, ckpt_path = util.make_path(args)
 
@@ -55,7 +56,7 @@ for i, param in enumerate(backbone.parameters()):
     else:
         param.requires_grad = True
 
-model = MTP(backbone, args.num_modes, is_diff=True)
+model = MTP(backbone, args.num_modes, is_diff=args.diff)
 loss_function = MTPLoss(args.num_modes, 1, 5)
 optimizer = optim.Adam(model.parameters(), lr=args.lr) if args.optimizer == 'adam' else optim.SGD(model.parameters(), lr=args.lr) 
 
@@ -78,7 +79,10 @@ for epoch in range(args.max_epc):
 
         optimizer.zero_grad()
         prediction = model(img, state)
-        loss = loss_function(prediction, diff.unsqueeze(1))
+        if args.diff:
+            loss = loss_function(prediction, diff.unsqueeze(1))
+        else:
+            loss = loss_function(prediction, gt.unsqueeze(1))
 
         loss.backward()
         optimizer.step()
@@ -93,7 +97,10 @@ for epoch in range(args.max_epc):
         img, state, gt, diff = img.to(device), state.to(device), gt.to(device), diff.to(device)
 
         prediction = model(img, state)
-        loss = loss_function(prediction, diff.unsqueeze(1))
+        if args.diff:
+            loss = loss_function(prediction, diff.unsqueeze(1))
+        else:
+            loss = loss_function(prediction, gt.unsqueeze(1))
 
         loss_val_mean.append(loss.item())
 

@@ -74,6 +74,8 @@ class DataSet_proj(torch.utils.data.Dataset):
     
     def __getitem__(self, index):
         fn = self.fns[index]
+        raster_image = Image.open(os.path.join(self.dataroot, 'raster', fn+'.jpg'))
+        raster_image = self.transform(raster_image)
         drivable_area = Image.open(os.path.join(self.dataroot, 'road', fn+'.jpg'))
         drivable_area = self.transform(drivable_area)
         lane_image = Image.open(os.path.join(self.dataroot, 'lane', fn+'.jpg'))
@@ -84,7 +86,7 @@ class DataSet_proj(torch.utils.data.Dataset):
         agent_state_vector = torch.load(os.path.join(self.dataroot, 'state', fn+'.state'))
         ground_truth = torch.load(os.path.join(self.dataroot, 'traj', fn+'.traj'))
 
-        return drivable_area, lane_image, agents_image, agent_state_vector, past_trajectory, ground_truth
+        return raster_image, drivable_area, lane_image, agents_image, agent_state_vector, past_trajectory, ground_truth
         
     def __len__(self):
         return len(self.fns)
