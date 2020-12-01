@@ -1,6 +1,3 @@
-# nuScenes dev-kit.
-# Code written by Freddy Boulton, Elena Corina Grigore 2020.
-
 import math
 import random
 from typing import List, Tuple
@@ -13,17 +10,17 @@ from nuscenes.prediction.models.backbone import calculate_backbone_feature_dim
 
 # Number of entries in Agent State Vector
 ASV_DIM = 3
-PAST_DIM = 24
+
 
 class MTP(nn.Module):
     """
-    Implementawpdlf tion of Multiple-Trajectory Prediction (MTP) model
+    Implementation of Multiple-Trajectory Prediction (MTP) model
     based on https://arxiv.org/pdf/1809.10732.pdf
     """
 
-    def __init__(self, backbone: nn.Module,
+    def __init__(self, backbone: nn.Module, num_modes: int,
                  seconds: float = 6, frequency_in_hz: float = 2,
-                 n_hidden_layers: int = 2048, input_shape: Tuple[int, int, int] = (3, 500, 500)):
+                 n_hidden_layers: int = 4096, input_shape: Tuple[int, int, int] = (3, 500, 500), is_diff=False):
         """
         Inits the MTP network.
         :param backbone: CNN Backbone to use.
@@ -37,32 +34,26 @@ class MTP(nn.Module):
         :param input_shape: Shape of the input expected by the network.
             This is needed because the size of the fully connected layer after
             the backbone depends on the backbone and its version.
-
         Note:
             Although seconds and frequency_in_hz are typed as floats, their
             product should be an int.
         """
 
         super().__init__()
-        self.attention = Attention()
-        self.backbone1 = backbone
-        self.backbone2 = backbone
-        self.backbone3 = backbone
+
+        self.backbone = backbone
+        self.num_modes = num_modes
         backbone_feature_dim = calculate_backbone_feature_dim(backbone, input_shape)
-        self.fc1 = nn.Linear(ASV_DIM, n_hidden_layers)
+        self.fc1 = nn.Linear(backbone_feature_dim + ASV_DIM, n_hidden_layers)
         # self.fc1 = nn.Linear(backbone_feature_dim, n_hidden_layers)
         predictions_per_mode = int(seconds * frequency_in_hz) * 2
+        if is_diff:
+            predictions_per_mode = int(seconds * frequency_in_hz) * 2 - 2 
 
-        self.fc2 = nn.Linear(PAST_DIM, n_hidden_layers)
-        self.hidden_units = 512
-        self.outputfc1 = nn.Linear(self.hidden_units, 256)
-        self.outputfc2 = nn.Linear(256, predictions_per_mode + 1)
+        self.fc2 = nn.Linear(n_hidden_layers, int(num_modes * predictions_per_mode + num_modes))
 
-    def forward(self, drive_tensor: torch.Tensor,
-                lane_tensor:torch.Tensor,
-                agent_tensor:torch.Tensor,
-                agent_state_vector: torch.Tensor,
-                past_vector:torch.Tensor) -> torch.Tensor:
+    def forward(self, image_tensor: torch.Tensor,
+                agent_state_vector: torch.Tensor) -> torch.Tensor:
         """
         Forward pass of the model.
         :param image_tensor: Tensor of images shape [batch_size, n_channels, length, width].
@@ -72,72 +63,23 @@ class MTP(nn.Module):
             storing the predicted trajectory and mode probabilities. Mode probabilities are normalized to sum
             to 1 during inference.
         """
-        #print(past_vector.shape)
-        #print(drive_tensor.shape)
-        past_vector = past_vector.reshape(past_vector.size(0), -1)
-        #print(past_vector.shape)
-        drivable_features = self.backbone1(drive_tensor).unsqueeze(1)
-        lane_features = self.backbone2(lane_tensor).unsqueeze(1)
-        agent_features = self.backbone3(agent_tensor).unsqueeze(1)
-        state_features = self.fc1(agent_state_vector).unsqueeze(1)
-        past_features = self.fc2(past_vector).unsqueeze(1)
-        features = torch.cat([drivable_features, lane_features, agent_features, state_features, past_features], dim=1)
+
+        backbone_features = self.backbone(image_tensor)
+
+        features = torch.cat([backbone_features, agent_state_vector], dim=1)
         # features = backbone_features
-        #print(features.shape)
-        output = self.attention(features)
-        #predictions = self.fc2(self.fc1(features))
-        output = self.outputfc2(self.outputfc1(output))
 
-        # print("real output shape")
-
-        # print(output.shape)
-
-        #output = output.reshape(output.size(0), output.size(1), 12, 2)
+        predictions = self.fc2(self.fc1(features))
 
         # Normalize the probabilities to sum to 1 for inference.
-        #mode_probabilities = predictions[:, -self.num_modes:].clone()
-        #if not self.training:
-        #    mode_probabilities = f.softmax(mode_probabilities, dim=-1)
-        mode_probabilities = output[:, -1:].clone()
-        #if not self.training:
-        #    mode_probabilities = f.softmax(mode_probabilities, dim=-1)
+        mode_probabilities = predictions[:, -self.num_modes:].clone()
+        if not self.training:
+            mode_probabilities = f.softmax(mode_probabilities, dim=-1)
 
-        predictions = output[:, :-1]
-        #print(predictions.shape)
-        output = torch.cat((predictions, mode_probabilities), 1).squeeze(1)
-        # print("real output shape")
-        # print(output.shape)
-        return output
-        #predictions = predictions[:, :-self.num_modes]
-        #return output
+        predictions = predictions[:, :-self.num_modes]
 
-class Attention(nn.Module):
-    def __init__(self, n_hidden_units = 2048):
-        super().__init__()
-        self.Q = nn.Linear(n_hidden_units, 512)
-        self.K = nn.Linear(n_hidden_units, 512)
-        self.V = nn.Linear(n_hidden_units, 512)
+        return torch.cat((predictions, mode_probabilities), 1)
 
-
-    def forward(self, features):
-        Q = self.Q(features)
-        K = self.K(features)
-        #print(Q.shape)
-        # print("K Shape")
-        # print(K.shape)
-        # print("Q REshape")
-        # print(Q[:, 4, :].unsqueeze(1).shape)
-        V = self.V(features)
-        attention = torch.bmm(Q[:, 4, :].unsqueeze(1) , K.transpose(1,2))/(torch.sqrt(torch.FloatTensor([Q.size(1)]))).to(torch.device('cuda:0' if torch.cuda.is_available() else 'cpu'))
-        # print("attention shape")
-        # print(attention.shape)
-        attention = torch.softmax(attention, dim= -1)
-        # print(attention.shape)
-        #print(V.shape)
-        attention = torch.bmm(attention ,V)
-        # print("output attention shape")
-        # print(attention.shape)
-        return attention
 
 class MTPLoss:
     """ Computes the loss for the MTP model. """
@@ -316,8 +258,8 @@ class MTPLoss:
             loss = classification_loss + self.regression_loss_weight * regression_loss
 
             deg = abs(math.atan( targets[batch_idx][0][-1][1]/targets[batch_idx][0][-1][0])*180/math.pi)
-            #deg_weight = math.exp(deg/45)
-            #loss = loss * deg_weight
+            deg_weight = math.exp(deg/20)
+            # loss = loss * deg_weight
 
             batch_losses = torch.cat((batch_losses, loss.unsqueeze(0)), 0)
 

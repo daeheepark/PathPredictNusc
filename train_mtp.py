@@ -10,39 +10,46 @@ import argparse
 import json
 
 from backbone import ResNetBackbone, MobileNetBackbone
-from mtp import MTP, MTPLoss
-import util 
+from mtp import MTP, MTP_baseline, MTPLoss
+# from mtp2 import MTP as MTP2
+# from mtp2 import MTPLoss as MTPLoss2
+
+from util import *
 
 parser = argparse.ArgumentParser()
 parser.add_argument('--name',       required=True,  type=str,   help='experiment name. saved to ./exps/[name]')
 parser.add_argument('--max_epc',    default=30,    type=int)
 parser.add_argument('--min_loss',   default=0.56234,type=float, help='minimum loss threshold that training stop')
-parser.add_argument('--batch_size', default=100,     type=int)
+parser.add_argument('--batch_size', default=32,     type=int)
 parser.add_argument('--num_workers',default=4,      type=int)
 parser.add_argument('--optimizer',  default='sgd', choices=['adam', 'sgd'])
 parser.add_argument('--lr',         default=0.01, type=float)
 parser.add_argument('--gpu_ids',    default='0,1',  type=str,   help='id of gpu ex) "0" or "0,1"')
 parser.add_argument('--tsboard',    action='store_true',        help='use tensorboardX to viasuzliae experiments')
 parser.add_argument('--diff',       action='store_true',        help='difference of trajectory as output')
+parser.add_argument('--attention',  action='store_true',        help='transformer based attention model')
 
 parser.add_argument('--num_modes',  default=2, type=int)
 parser.add_argument('--backbone',   default='mobilenet_v2',     choices=['mobilenet_v2', 'resnet18', 'resnet34', 'resnet50', 'resnet101', 'resnet152'])
 parser.add_argument('--unfreeze',   default=0,      type=int,   help='number of layer of backbone CNN to update weight')
 
-args = parser.parse_args('--name test --optimizer sgd --lr 0.1 --backbone mobilenet_v2 --num_modes 1'.split())
+args = parser.parse_args('--name 1201_mode1_mbnet_1 --optimizer sgd --lr 0.1 --backbone mobilenet_v2 --num_modes 1 --max_epc 30 --batch_size 32'.split())
 # args = parser.parse_args()
 
-exp_path, train_path, val_path, infer_path, ckpt_path = util.make_path(args)
+exp_path, train_path, val_path, infer_path, ckpt_path = make_path(args)
 
 f = open(ckpt_path+'/'+'exp_config.txt', 'w')
 json.dump(args.__dict__, f, indent=2)
 f.close()
 
-os.environ["CUDA_VISIBLE_DEVICES"] = args.gpu_ids
+if os.path.isfile(ckpt_path+'/'+'save_log.txt'):
+    os.remove(ckpt_path+'/'+'save_log.txt')
+
+os.environ["CUDA_VISIBLE_DEVICES"] = '0'
 device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
 
-trainset = util.DataSet_differential('./dataset/train', 'train')
-valset = util.DataSet_differential('./dataset/val', 'train_val')
+trainset = DataSet_proj('./dataset_chh/train', 'train')
+valset = DataSet_proj('./dataset_chh/train_val', 'train_val')
 
 train_loader = DataLoader(trainset, shuffle=True, batch_size=args.batch_size, num_workers=args.num_workers)
 val_loader = DataLoader(valset, shuffle=False, batch_size=args.batch_size, num_workers=args.num_workers)
@@ -56,7 +63,11 @@ for i, param in enumerate(backbone.parameters()):
     else:
         param.requires_grad = True
 
-model = MTP(backbone, args.num_modes, is_diff=args.diff)
+if args.attention:
+    model = MTP(backbone, is_diff=args.diff)
+else:
+    model = MTP_baseline(backbone, args.num_modes, is_diff=args.diff)
+    
 loss_function = MTPLoss(args.num_modes, 1, 5)
 optimizer = optim.Adam(model.parameters(), lr=args.lr) if args.optimizer == 'adam' else optim.SGD(model.parameters(), lr=args.lr) 
 
@@ -73,16 +84,26 @@ for epoch in range(args.max_epc):
     print('training start')
     model.train()
     loss_tr_mean = []
-    for img, state, gt, diff in tqdm(train_loader):
-        img, state, gt, diff = util.NaN2Zero(img), util.NaN2Zero(state), util.NaN2Zero(gt), util.NaN2Zero(diff)
-        img, state, gt, diff = img.to(device), state.to(device), gt.to(device), diff.to(device)
+
+    for batch in tqdm(train_loader):
+        raster, road, lane, agents, state, past, gt, diff = batch
+
+        if not args.diff:
+            gt_ = gt
+        else:
+            gt_ = diff
+
+        raster, road, lane, agents, state, past, gt_ = NaN2Zero(raster), NaN2Zero(road), NaN2Zero(lane), NaN2Zero(agents), NaN2Zero(state), NaN2Zero(past),  NaN2Zero(gt_)
+        raster, road, lane, agents, state, past, gt_ = raster.to(device), road.to(device), lane.to(device), agents.to(device), state.to(device), past.to(device), gt_.to(device)
 
         optimizer.zero_grad()
-        prediction = model(img, state)
-        if args.diff:
-            loss = loss_function(prediction, diff.unsqueeze(1))
+
+        if not args.attention:
+            prediction = model(raster, state)
         else:
-            loss = loss_function(prediction, gt.unsqueeze(1))
+            prediction = model(road, lane, agents, state, past)
+
+        loss = loss_function(prediction, gt_.unsqueeze(1))
 
         loss.backward()
         optimizer.step()
@@ -92,15 +113,22 @@ for epoch in range(args.max_epc):
     print('validation start')
     model.eval()
     loss_val_mean = []
-    for img, state, gt, diff in tqdm(val_loader):
-        img, state, gt, diff = util.NaN2Zero(img), util.NaN2Zero(state), util.NaN2Zero(gt), util.NaN2Zero(diff)
-        img, state, gt, diff = img.to(device), state.to(device), gt.to(device), diff.to(device)
-
-        prediction = model(img, state)
-        if args.diff:
-            loss = loss_function(prediction, diff.unsqueeze(1))
+    for batch in tqdm(val_loader):
+        raster, road, lane, agents, state, past, gt, diff = batch
+        if not args.diff:
+            gt_ = gt
         else:
-            loss = loss_function(prediction, gt.unsqueeze(1))
+            gt_ = diff
+
+        raster, road, lane, agents, state, past, gt_ = NaN2Zero(raster), NaN2Zero(road), NaN2Zero(lane), NaN2Zero(agents), NaN2Zero(state), NaN2Zero(past),  NaN2Zero(gt_)
+        raster, road, lane, agents, state, past, gt_ = raster.to(device), road.to(device), lane.to(device), agents.to(device), state.to(device), past.to(device), gt_.to(device)
+
+        if not args.attention:
+            prediction = model(raster, state)
+        else:
+            prediction = model(road, lane, agents, state, past)
+        
+        loss = loss_function(prediction, gt_.unsqueeze(1))
 
         loss_val_mean.append(loss.item())
 
