@@ -8,9 +8,18 @@ pip install -r requirement.txt
 
 ## Generate Dataset (Raster image, state vector, gt trajectory) from Nuscenes dataset
 
-You should download [**Nuscenes/Fulldataset(v1.0)/Trainval/Metadata**](https://www.nuscenes.org/download) (Direct download link is [here](https://s3.ap-southeast-1.amazonaws.com/asia.data.nuscenes.org/public/v1.0/v1.0-trainval_meta.tgz?AWSAccessKeyId=AKIA6RIK4RRMFUKM7AM2&Signature=I11deucpmFyJZ0YiQhfPnPtUfQQ%3D&Expires=1601281058))
+* You should download [**Nuscenes/Fulldataset(v1.0)/Trainval/Metadata**](https://www.nuscenes.org/download) (Direct download link is [here](https://s3.ap-southeast-1.amazonaws.com/asia.data.nuscenes.org/public/v1.0/v1.0-trainval_meta.tgz?AWSAccessKeyId=AKIA6RIK4RRMFUKM7AM2&Signature=I11deucpmFyJZ0YiQhfPnPtUfQQ%3D&Expires=1601281058))
+* Unzip downloaded meta filt to [DATAROOT].
 
-Unzip downloaded meta filt to [DATAROOT] then run:
+<br/>
+
+* Second, download map expansion from the same webpage.
+* Then, extract the contents (folders basemap, expansion and prediction) to your nuScenes maps folder ([DATAROOT]/maps).
+(Instruction is brought from [here](https://github.com/nutonomy/nuscenes-devkit#map-expansion))
+
+<br/>
+
+* then run:
 
 ```
 python gen_dataset.py --dataroot [DATAROOT] --split [SPLIT]
